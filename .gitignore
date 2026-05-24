@@ -1,0 +1,11 @@
+.env
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+/data/
+/tmp/
+/bin/
+/dist/
+/coverage.out

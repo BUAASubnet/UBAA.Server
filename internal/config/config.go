@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BUAASubnet/UBAA.Server/internal/buildinfo"
 	"github.com/joho/godotenv"
 )
 
@@ -40,6 +41,9 @@ type Config struct {
 	SQLitePath string
 
 	ServerVersion     string
+	ServerVersionCode int
+	ServerCommit      string
+	ServerBuildTime   string
 	UpdateDownloadURL string
 
 	FreeCacheSizeBytes int
@@ -86,7 +90,10 @@ func Load() Config {
 		AuthPreloadTimeout:     millisEnv("AUTH_PRELOAD_TIMEOUT_MS", 3000),
 		AuthLoginTimeout:       millisEnv("AUTH_LOGIN_TIMEOUT_MS", 18000),
 		SQLitePath:             stringEnv("SQLITE_PATH", "data/ubaa-server.db"),
-		ServerVersion:          firstNonBlank(env("UBAA_SERVER_VERSION"), env("PROJECT_VERSION"), "unknown"),
+		ServerVersion:          firstNonBlank(env("UBAA_SERVER_VERSION"), env("PROJECT_VERSION"), buildinfo.Version),
+		ServerVersionCode:      intEnv("UBAA_SERVER_VERSION_CODE", buildinfo.VersionCodeInt()),
+		ServerCommit:           firstNonBlank(env("UBAA_SERVER_COMMIT"), buildinfo.Commit),
+		ServerBuildTime:        firstNonBlank(env("UBAA_SERVER_BUILD_TIME"), buildinfo.BuildTime),
 		UpdateDownloadURL: stringEnv(
 			"UPDATE_DOWNLOAD_URL",
 			"https://github.com/BUAASubnet/UBAA/releases",

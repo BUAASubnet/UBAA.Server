@@ -57,6 +57,8 @@ func TestResolveSigninRedirectURL(t *testing.T) {
 		"https://sso.buaa.edu.cn/login": "https://sso.buaa.edu.cn/login",
 		"/?type=jumpMyCenter#/MyCenter": "https://iclass.buaa.edu.cn:8346/?type=jumpMyCenter#/MyCenter",
 		"cas/final":                     "https://iclass.buaa.edu.cn:8346/cas/final",
+		"?loginName=abc%2Bdef%3D":       "https://iclass.buaa.edu.cn:8346/cas-login?loginName=abc%2Bdef%3D",
+		"#/MyCenter":                    "https://iclass.buaa.edu.cn:8346/cas-login?ticket=ST-test#/MyCenter",
 	}
 	for location, want := range cases {
 		if got := resolveSigninRedirectURL("https://iclass.buaa.edu.cn:8346/cas-login?ticket=ST-test", location); got != want {

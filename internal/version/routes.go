@@ -16,6 +16,9 @@ type AppVersionCheckResponse struct {
 	DownloadURL     string  `json:"downloadUrl"`
 	ReleaseNotes    *string `json:"releaseNotes"`
 	ServerVersion   *string `json:"serverVersion"`
+	VersionCode     *int    `json:"versionCode,omitempty"`
+	ServerCommit    *string `json:"serverCommit,omitempty"`
+	ServerBuildTime *string `json:"serverBuildTime,omitempty"`
 	Aligned         *bool   `json:"aligned"`
 }
 
@@ -35,6 +38,9 @@ func RegisterRoutes(app fiber.Router, cfg config.Config) {
 		}
 		aligned := !updateAvailable
 		serverVersion := cfg.ServerVersion
+		versionCode := cfg.ServerVersionCode
+		serverCommit := knownMetadata(cfg.ServerCommit)
+		serverBuildTime := knownMetadata(cfg.ServerBuildTime)
 		return c.Status(fiber.StatusOK).JSON(AppVersionCheckResponse{
 			LatestVersion:   cfg.ServerVersion,
 			Status:          status,
@@ -42,6 +48,9 @@ func RegisterRoutes(app fiber.Router, cfg config.Config) {
 			DownloadURL:     cfg.UpdateDownloadURL,
 			ReleaseNotes:    nil,
 			ServerVersion:   &serverVersion,
+			VersionCode:     &versionCode,
+			ServerCommit:    serverCommit,
+			ServerBuildTime: serverBuildTime,
 			Aligned:         &aligned,
 		})
 	})
@@ -50,6 +59,14 @@ func RegisterRoutes(app fiber.Router, cfg config.Config) {
 func knownVersion(version string) bool {
 	normalized := strings.TrimSpace(version)
 	return normalized != "" && normalized != "unknown"
+}
+
+func knownMetadata(value string) *string {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" || normalized == "unknown" {
+		return nil
+	}
+	return &normalized
 }
 
 func compareVersions(left, right string) int {

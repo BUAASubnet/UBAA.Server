@@ -29,6 +29,7 @@ func New(deps Dependencies) *fiber.App {
 	cfg := deps.Config
 	app := fiber.New(fiber.Config{
 		ErrorHandler: httpx.FiberErrorHandler,
+		ProxyHeader:  forwardedProxyHeader(cfg),
 	})
 	app.Use(requestid.New(requestid.Config{
 		Header: fiber.HeaderXRequestID,
@@ -69,6 +70,13 @@ func New(deps Dependencies) *fiber.App {
 		return c.SendString("Ktor: Hello, Java!")
 	})
 	return app
+}
+
+func forwardedProxyHeader(cfg config.Config) string {
+	if !cfg.EnableForwardedHeaders {
+		return ""
+	}
+	return fiber.HeaderXForwardedFor
 }
 
 func isAllowedOrigin(origin string, cfg config.Config) bool {

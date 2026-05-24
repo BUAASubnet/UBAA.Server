@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/big"
 	mrand "math/rand"
@@ -366,6 +367,7 @@ func (c *bykcClient) callAPI(ctx context.Context, apiName, requestJSON string, o
 	if err := json.Unmarshal(response.Data, out); err != nil {
 		return ErrBykcUpstream
 	}
+	c.appendParsedRawCourseLog(apiName, out)
 	return nil
 }
 
@@ -439,10 +441,61 @@ func (c *bykcClient) callAPIRaw(ctx context.Context, apiName, requestJSON string
 		return "", upstreamStatusError(resp.StatusCode, ErrBykcUpstream, "bykc_timeout")
 	}
 	decoded := decodeBykcResponse(string(body), encrypted.AESKey)
+	c.appendRawLog(apiName, requestJSON, decoded)
 	if strings.Contains(decoded, "会话已失效") || strings.Contains(decoded, "未登录") {
 		return "", ErrFeatureUnauthenticated
 	}
 	return decoded, nil
+}
+
+func (c *bykcClient) appendRawLog(apiName, requestJSON, raw string) {
+	if !c.service.bykcDebugRawAPILog {
+		return
+	}
+	log.Printf("BYKC raw api log user=%s api=%s request=%s raw=%s", c.username, apiName, requestJSON, raw)
+}
+
+func (c *bykcClient) appendParsedRawCourseLog(apiName string, out any) {
+	if !c.service.bykcDebugParsedCourseLog || out == nil {
+		return
+	}
+	var courses []dto.BykcCourseDto
+	switch typed := out.(type) {
+	case *map[string]any:
+		if typed == nil {
+			return
+		}
+		for _, key := range []string{"content", "courseList"} {
+			for _, item := range bykcSlice((*typed)[key]) {
+				course := bykcMap(item)
+				if nested := bykcMap(course["courseInfo"]); nested != nil {
+					course = nested
+				}
+				if course != nil {
+					courses = append(courses, mapBykcCourse(course, bykcCourseStatus(course, time.Now())))
+				}
+			}
+		}
+	case *[]dto.BykcChosenCourseDto:
+		if typed == nil {
+			return
+		}
+		raw, err := json.Marshal(typed)
+		if err == nil {
+			log.Printf("BYKC parsed course log user=%s api=%s count=%d raw=%s", c.username, apiName, len(*typed), string(raw))
+		}
+		return
+	default:
+		return
+	}
+	if len(courses) == 0 {
+		return
+	}
+	raw, err := json.Marshal(courses)
+	if err != nil {
+		return
+	}
+	log.Printf("BYKC parsed course log user=%s api=%s count=%d raw=%s", c.username, apiName, len(courses), string(raw))
 }
 
 func mapBykcCourse(raw map[string]any, status string) dto.BykcCourseDto {

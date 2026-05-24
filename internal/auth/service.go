@@ -36,10 +36,11 @@ var ErrCaptchaRequired = errors.New("captcha required")
 var ErrUpstreamTimeout = errors.New("auth upstream timeout")
 
 type Service struct {
-	cfg     config.Config
-	db      *storage.DB
-	cache   *freecache.Cache
-	clients *upstream.ClientFactory
+	cfg        config.Config
+	db         *storage.DB
+	cache      *freecache.Cache
+	clients    *upstream.ClientFactory
+	loginSlots chan struct{}
 }
 
 type Session struct {
@@ -51,7 +52,17 @@ type Session struct {
 }
 
 func NewService(cfg config.Config, db *storage.DB, cache *freecache.Cache, clients *upstream.ClientFactory) *Service {
-	return &Service{cfg: cfg, db: db, cache: cache, clients: clients}
+	maxConcurrency := cfg.LoginMaxConcurrency
+	if maxConcurrency < 1 {
+		maxConcurrency = 1
+	}
+	return &Service{
+		cfg:        cfg,
+		db:         db,
+		cache:      cache,
+		clients:    clients,
+		loginSlots: make(chan struct{}, maxConcurrency),
+	}
 }
 
 func (s *Service) Preload(ctx context.Context, clientID string) (LoginPreloadResponse, error) {
@@ -63,6 +74,8 @@ func (s *Service) Preload(ctx context.Context, clientID string) (LoginPreloadRes
 	if err != nil {
 		return LoginPreloadResponse{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.AuthPreloadTimeout)
+	defer cancel()
 	subject := preloginSubject(clientID)
 	noRedirect, err := s.clients.NewNoRedirect(subject)
 	if err != nil {
@@ -74,6 +87,9 @@ func (s *Service) Preload(ctx context.Context, clientID string) (LoginPreloadRes
 	}
 	resp, err := noRedirect.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return LoginPreloadResponse{}, ErrUpstreamTimeout
+		}
 		return LoginPreloadResponse{
 			CaptchaRequired: false,
 			ClientID:        &clientID,
@@ -87,7 +103,11 @@ func (s *Service) Preload(ctx context.Context, clientID string) (LoginPreloadRes
 				ClientID:        &clientID,
 			}, nil
 		}
-		if user, err := s.validateUCSession(ctx, subject); err == nil {
+		user, err := s.validateUCSession(ctx, subject)
+		if err != nil && errors.Is(err, ErrUpstreamTimeout) && ctx.Err() != nil {
+			return LoginPreloadResponse{}, ErrUpstreamTimeout
+		}
+		if err == nil {
 			if err := s.clients.PromoteSubject(ctx, subject, user.SchoolID); err != nil {
 				return LoginPreloadResponse{}, err
 			}
@@ -144,6 +164,13 @@ func (s *Service) Login(ctx context.Context, request LoginRequest) (LoginRespons
 	if username == "" || password == "" {
 		return LoginResponse{}, ErrInvalidToken
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.AuthLoginTimeout)
+	defer cancel()
+	release, err := s.acquireLoginSlot(ctx)
+	if err != nil {
+		return LoginResponse{}, err
+	}
+	defer release()
 	subject := username
 	if request.ClientID != nil && strings.TrimSpace(*request.ClientID) != "" {
 		subject = preloginSubject(strings.TrimSpace(*request.ClientID))
@@ -293,6 +320,8 @@ func (s *Service) ValidateBearerUpstream(ctx context.Context, authorization stri
 	if err != nil || session == nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.AuthValidationTimeout)
+	defer cancel()
 	user, err := s.validateUCSession(ctx, session.Username)
 	if err != nil {
 		if errors.Is(err, ErrUpstreamTimeout) {
@@ -307,6 +336,15 @@ func (s *Service) ValidateBearerUpstream(ctx context.Context, authorization stri
 	_ = s.cacheSession(session.Username, *session)
 	_ = s.db.TouchSession(ctx, session.Username, session.LastActivity)
 	return session, nil
+}
+
+func (s *Service) acquireLoginSlot(ctx context.Context) (func(), error) {
+	select {
+	case s.loginSlots <- struct{}{}:
+		return func() { <-s.loginSlots }, nil
+	case <-ctx.Done():
+		return nil, ErrUpstreamTimeout
+	}
 }
 
 func (s *Service) RecordLoginStat(ctx context.Context, request LoginStatsReportRequest) error {
@@ -453,7 +491,12 @@ func (s *Service) performCASLogin(ctx context.Context, client *http.Client, requ
 	html := ""
 	execution := strings.TrimSpace(valuePtr(request.Execution))
 	if execution == "" {
-		resp, err := client.Get(loginURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("User-Agent", defaultUserAgent)
+		resp, err := client.Do(req)
 		if err != nil {
 			return ErrUpstreamTimeout
 		}

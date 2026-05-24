@@ -19,10 +19,13 @@ type URLRewriter struct {
 	useVPN bool
 }
 
-func NewURLRewriter() URLRewriter {
+func NewURLRewriter(useVPN ...bool) URLRewriter {
+	if len(useVPN) > 0 {
+		return URLRewriter{useVPN: useVPN[0]}
+	}
 	value := strings.TrimSpace(os.Getenv("USE_VPN"))
-	useVPN, _ := strconv.ParseBool(value)
-	return URLRewriter{useVPN: value != "" && useVPN}
+	enabled, _ := strconv.ParseBool(value)
+	return URLRewriter{useVPN: value != "" && enabled}
 }
 
 func (r URLRewriter) UpstreamURL(raw string) string {

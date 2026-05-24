@@ -32,12 +32,22 @@ type Config struct {
 	SessionTTL      time.Duration
 	PreLoginTTL     time.Duration
 
+	LoginMaxConcurrency   int
+	AuthValidationTimeout time.Duration
+	AuthPreloadTimeout    time.Duration
+	AuthLoginTimeout      time.Duration
+
 	SQLitePath string
 
 	ServerVersion     string
 	UpdateDownloadURL string
 
 	FreeCacheSizeBytes int
+
+	UseVPN                   bool
+	TrustAllCerts            bool
+	BykcDebugRawAPILog       bool
+	BykcDebugParsedCourseLog bool
 }
 
 func Load() Config {
@@ -71,13 +81,21 @@ func Load() Config {
 		RefreshTokenTTL:        time.Duration(intEnv("REFRESH_TOKEN_TTL_DAYS", 7)) * 24 * time.Hour,
 		SessionTTL:             time.Duration(intEnv("SESSION_TTL_DAYS", 7)) * 24 * time.Hour,
 		PreLoginTTL:            time.Duration(max(intEnv("PRELOGIN_TTL_MINUTES", 5), 1)) * time.Minute,
+		LoginMaxConcurrency:    max(intEnv("LOGIN_MAX_CONCURRENCY", 6), 1),
+		AuthValidationTimeout:  millisEnv("AUTH_VALIDATION_TIMEOUT_MS", 3000),
+		AuthPreloadTimeout:     millisEnv("AUTH_PRELOAD_TIMEOUT_MS", 3000),
+		AuthLoginTimeout:       millisEnv("AUTH_LOGIN_TIMEOUT_MS", 18000),
 		SQLitePath:             stringEnv("SQLITE_PATH", "data/ubaa-server.db"),
 		ServerVersion:          firstNonBlank(env("UBAA_SERVER_VERSION"), env("PROJECT_VERSION"), "unknown"),
 		UpdateDownloadURL: stringEnv(
 			"UPDATE_DOWNLOAD_URL",
 			"https://github.com/BUAASubnet/UBAA/releases",
 		),
-		FreeCacheSizeBytes: max(intEnv("FREECACHE_SIZE_MB", 64), 1) * 1024 * 1024,
+		FreeCacheSizeBytes:       max(intEnv("FREECACHE_SIZE_MB", 64), 1) * 1024 * 1024,
+		UseVPN:                   boolEnv("USE_VPN", false),
+		TrustAllCerts:            boolEnv("TRUST_ALL_CERTS", false),
+		BykcDebugRawAPILog:       boolEnv("BYKC_DEBUG_RAW_API_LOG", false),
+		BykcDebugParsedCourseLog: boolEnv("BYKC_DEBUG_PARSED_COURSE_LOG", false),
 	}
 }
 
@@ -106,6 +124,10 @@ func intEnv(name string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func millisEnv(name string, fallback int) time.Duration {
+	return time.Duration(max(intEnv(name, fallback), 1)) * time.Millisecond
 }
 
 func boolEnv(name string, fallback bool) bool {

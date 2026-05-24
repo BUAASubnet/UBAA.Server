@@ -21,14 +21,17 @@ func main() {
 	defer db.Close()
 
 	cache := freecache.NewCache(cfg.FreeCacheSizeBytes)
-	clients := upstream.NewClientFactory(db, upstream.NewURLRewriter())
+	clients := upstream.NewClientFactory(db, upstream.NewURLRewriter(cfg.UseVPN), cfg.TrustAllCerts)
 	authService := auth.NewService(cfg, db, cache, clients)
 	server := app.New(app.Dependencies{
-		Config:   cfg,
-		DB:       db,
-		Cache:    cache,
-		Auth:     authService,
-		Features: features.NewService(clients),
+		Config: cfg,
+		DB:     db,
+		Cache:  cache,
+		Auth:   authService,
+		Features: features.NewService(clients, features.Options{
+			BykcDebugRawAPILog:       cfg.BykcDebugRawAPILog,
+			BykcDebugParsedCourseLog: cfg.BykcDebugParsedCourseLog,
+		}),
 	})
 	log.Printf("Starting UBAA.Server on %s", cfg.ListenAddr())
 	if err := server.Listen(cfg.ListenAddr()); err != nil {

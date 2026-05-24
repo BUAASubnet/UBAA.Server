@@ -10,7 +10,7 @@
 [![FreeCache](https://img.shields.io/badge/FreeCache-enabled-4B8BBE)](https://github.com/coocood/freecache)
 [![License](https://img.shields.io/badge/license-see%20upstream-lightgrey)](https://github.com/BUAASubnet/UBAA)
 
-[原项目](https://github.com/BUAASubnet/UBAA) · [本仓库](https://github.com/BUAASubnet/UBAA.Server) · [快速开始](#快速开始) · [功能覆盖](#功能覆盖) · [配置项](#配置项) · [兼容性](#兼容性)
+[原项目](https://github.com/BUAASubnet/UBAA) · [本仓库](https://github.com/BUAASubnet/UBAA.Server) · [快速开始](#快速开始) · [功能覆盖](#功能覆盖) · [环境变量](#环境变量) · [兼容性](#兼容性)
 
 </div>
 
@@ -49,6 +49,7 @@
 ### 直接运行
 
 ```bash
+cp .env.example .env
 go run ./cmd/server
 ```
 
@@ -96,22 +97,44 @@ go build -trimpath -ldflags "-s -w" -o bin/ubaa-server ./cmd/server
 
 更多兼容性细节见 [docs/compatibility.md](docs/compatibility.md)。
 
-## 配置项
+## 环境变量
+
+[`UBAA.Server`](https://github.com/BUAASubnet/UBAA.Server) 启动时会读取进程环境变量，也会自动加载仓库根目录的 [`.env.example`](.env.example) 同格式 `.env` 文件。本地开发建议先执行：
+
+```bash
+cp .env.example .env
+```
+
+`.env`、SQLite 数据库、日志和 token 不应提交到仓库。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | [`SERVER_BIND_HOST`](internal/config/config.go) | `0.0.0.0` | 服务监听地址 |
 | [`SERVER_PORT`](internal/config/config.go) | `5432` | 服务端口 |
 | [`SQLITE_PATH`](internal/config/config.go) | `data/ubaa-server.db` | SQLite 数据库路径 |
+| [`FREECACHE_SIZE_MB`](internal/config/config.go) | `64` | [FreeCache](https://github.com/coocood/freecache) 内存大小 |
+| [`UBAA_SERVER_VERSION`](internal/config/config.go) / [`PROJECT_VERSION`](internal/config/config.go) | `unknown` | 服务端版本号 |
+| [`UPDATE_DOWNLOAD_URL`](internal/config/config.go) | [GitHub Releases](https://github.com/BUAASubnet/UBAA/releases) | 应用更新下载地址 |
 | [`JWT_SECRET`](internal/config/config.go) | `ubaa-dev-secret-unsafe` | JWT 签名密钥，生产环境必须修改 |
 | [`ACCESS_TOKEN_TTL_MINUTES`](internal/config/config.go) | `30` | Access Token 有效期 |
 | [`REFRESH_TOKEN_TTL_DAYS`](internal/config/config.go) | `7` | Refresh Token 有效期 |
 | [`SESSION_TTL_DAYS`](internal/config/config.go) | `7` | 服务端会话有效期 |
-| [`FREECACHE_SIZE_MB`](internal/config/config.go) | `64` | FreeCache 内存大小 |
+| [`PRELOGIN_TTL_MINUTES`](internal/config/config.go) | `5` | 预登录会话有效期 |
+| [`LOGIN_MAX_CONCURRENCY`](internal/config/config.go) | `6` | 单进程全新登录并发上限 |
+| [`AUTH_VALIDATION_TIMEOUT_MS`](internal/config/config.go) | `3000` | `/api/v1/auth/status` 上游校验超时 |
+| [`AUTH_PRELOAD_TIMEOUT_MS`](internal/config/config.go) | `3000` | 登录预加载超时 |
+| [`AUTH_LOGIN_TIMEOUT_MS`](internal/config/config.go) | `18000` | 全新登录总超时 |
+| [`INSTANCE_ID`](internal/config/config.go) / [`HOSTNAME`](internal/config/config.go) | 主机名 | 实例标识 |
+| [`ENABLE_FORWARDED_HEADERS`](internal/config/config.go) | `true` | 反向代理头支持 |
 | [`CORS_ALLOWED_ORIGINS`](internal/config/config.go) | 空 | 允许的跨域来源，逗号分隔 |
-| [`UPDATE_DOWNLOAD_URL`](internal/config/config.go) | GitHub Releases | 应用更新下载地址 |
+| [`USE_VPN`](internal/config/config.go) | `false` | 将上游 URL 转换到 BUAA WebVPN |
+| [`TRUST_ALL_CERTS`](internal/config/config.go) | `false` | 跳过上游 TLS 证书校验，仅用于排障 |
+| [`BYKC_DEBUG_RAW_API_LOG`](internal/config/config.go) | `false` | 输出博雅课程解密后的原始响应 |
+| [`BYKC_DEBUG_PARSED_COURSE_LOG`](internal/config/config.go) | `false` | 输出博雅课程解析后的课程数据 |
 
-本地开发可以使用环境变量，也可以放在 `.env` 中。`.env`、数据库、日志和 token 不应提交到仓库。
+与原 [`BUAASubnet/UBAA`](https://github.com/BUAASubnet/UBAA) 后端相比，Go 版保留了仍适用的 `.env` 能力：监听地址、更新地址、JWT、WebVPN、BYKC 调试、CORS、令牌/会话生命周期、认证超时和登录并发控制。原后端的 Redis 相关配置，如 `REDIS_URI`、`REDIS_HEALTH_TIMEOUT_MS`、`SESSION_COOKIE_SYNC_INTERVAL_MS`、`AUTH_DISTRIBUTED_LOCK_*`，在本仓库中不再使用；对应能力由 [SQLite](https://www.sqlite.org/) 持久化、[FreeCache](https://github.com/coocood/freecache) 和单进程登录并发阀门承担。
+
+`HTTP_PROXY` / `HTTPS_PROXY` 仍可通过 Go 标准库的 [`http.ProxyFromEnvironment`](https://pkg.go.dev/net/http#ProxyFromEnvironment) 生效，不需要写入专门配置项。
 
 ## 开发
 

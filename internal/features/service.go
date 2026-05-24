@@ -25,19 +25,34 @@ var (
 )
 
 type Service struct {
-	clients        *upstream.ClientFactory
-	signinClients  sync.Map
-	spocClients    sync.Map
-	judgeClients   sync.Map
-	libBookClients sync.Map
-	cgyyClients    sync.Map
-	bykcClients    sync.Map
-	ygdkClients    sync.Map
-	ygdkContexts   sync.Map
+	clients                  *upstream.ClientFactory
+	bykcDebugRawAPILog       bool
+	bykcDebugParsedCourseLog bool
+	signinClients            sync.Map
+	spocClients              sync.Map
+	judgeClients             sync.Map
+	libBookClients           sync.Map
+	cgyyClients              sync.Map
+	bykcClients              sync.Map
+	ygdkClients              sync.Map
+	ygdkContexts             sync.Map
 }
 
-func NewService(clients *upstream.ClientFactory) *Service {
-	return &Service{clients: clients}
+type Options struct {
+	BykcDebugRawAPILog       bool
+	BykcDebugParsedCourseLog bool
+}
+
+func NewService(clients *upstream.ClientFactory, options ...Options) *Service {
+	opts := Options{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return &Service{
+		clients:                  clients,
+		bykcDebugRawAPILog:       opts.BykcDebugRawAPILog,
+		bykcDebugParsedCourseLog: opts.BykcDebugParsedCourseLog,
+	}
 }
 
 type cachedSigninClient struct {

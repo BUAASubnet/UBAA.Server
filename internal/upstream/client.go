@@ -18,10 +18,11 @@ import (
 )
 
 type ClientFactory struct {
-	db       *storage.DB
-	rewriter Rewriter
-	mu       sync.Mutex
-	clients  map[string]*SessionClient
+	db            *storage.DB
+	rewriter      Rewriter
+	trustAllCerts bool
+	mu            sync.Mutex
+	clients       map[string]*SessionClient
 }
 
 type Rewriter interface {
@@ -34,11 +35,16 @@ type SessionClient struct {
 	jar     *persistentCookieJar
 }
 
-func NewClientFactory(db *storage.DB, rewriter Rewriter) *ClientFactory {
+func NewClientFactory(db *storage.DB, rewriter Rewriter, trustAllCerts ...bool) *ClientFactory {
+	trustAll := trustAllCertsFromEnv()
+	if len(trustAllCerts) > 0 {
+		trustAll = trustAllCerts[0]
+	}
 	return &ClientFactory{
-		db:       db,
-		rewriter: rewriter,
-		clients:  map[string]*SessionClient{},
+		db:            db,
+		rewriter:      rewriter,
+		trustAllCerts: trustAll,
+		clients:       map[string]*SessionClient{},
 	}
 }
 
@@ -58,7 +64,7 @@ func (f *ClientFactory) Get(subject string) (*SessionClient, error) {
 		Client: &http.Client{
 			Jar:       jar,
 			Timeout:   30 * time.Second,
-			Transport: newTransport(),
+			Transport: newTransport(f.trustAllCerts),
 		},
 	}
 	f.clients[subject] = client
@@ -73,20 +79,20 @@ func (f *ClientFactory) NewNoRedirect(subject string) (*http.Client, error) {
 	return &http.Client{
 		Jar:       sessionClient.jar,
 		Timeout:   30 * time.Second,
-		Transport: newTransport(),
+		Transport: newTransport(f.trustAllCerts),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}, nil
 }
 
-func newTransport() http.RoundTripper {
+func newTransport(trustAllCerts bool) http.RoundTripper {
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return http.DefaultTransport
 	}
 	transport := base.Clone()
-	if trustAllCerts() {
+	if trustAllCerts {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 		return transport
 	}
@@ -97,7 +103,7 @@ func newTransport() http.RoundTripper {
 	return transport
 }
 
-func trustAllCerts() bool {
+func trustAllCertsFromEnv() bool {
 	value := strings.TrimSpace(os.Getenv("TRUST_ALL_CERTS"))
 	return strings.EqualFold(value, "true") || value == "1"
 }

@@ -74,7 +74,7 @@ go build -trimpath -ldflags "-s -w" -o bin/ubaa-server ./cmd/server
 ./bin/ubaa-server
 ```
 
-发布构建可以把 Git 信息写入二进制；默认版本号已与 [`BUAASubnet/UBAA`](https://github.com/BUAASubnet/UBAA) 当前主分支对齐为 `1.7.3` / `26`：
+发布构建可以把 Git 信息写入二进制；默认版本号已与 [`BUAASubnet/UBAA`](https://github.com/BUAASubnet/UBAA) 最新 release `v1.7.5` 对齐为 `1.7.5` / `28`：
 
 ```bash
 go build -trimpath \
@@ -123,8 +123,8 @@ cp .env.example .env
 | [`SERVER_PORT`](internal/config/config.go) | `5432` | 服务端口 |
 | [`SQLITE_PATH`](internal/config/config.go) | `data/ubaa-server.db` | SQLite 数据库路径 |
 | [`FREECACHE_SIZE_MB`](internal/config/config.go) | `64` | [FreeCache](https://github.com/coocood/freecache) 内存大小 |
-| [`UBAA_SERVER_VERSION`](internal/config/config.go) / [`PROJECT_VERSION`](internal/config/config.go) | `1.7.3` | 服务端版本号，默认对齐 [`BUAASubnet/UBAA`](https://github.com/BUAASubnet/UBAA) |
-| [`UBAA_SERVER_VERSION_CODE`](internal/config/config.go) | `26` | 服务端版本代码 |
+| [`UBAA_SERVER_VERSION`](internal/config/config.go) / [`PROJECT_VERSION`](internal/config/config.go) | `1.7.5` | 服务端版本号，默认对齐 [`BUAASubnet/UBAA`](https://github.com/BUAASubnet/UBAA) |
+| [`UBAA_SERVER_VERSION_CODE`](internal/config/config.go) | `28` | 服务端版本代码 |
 | [`UBAA_SERVER_COMMIT`](internal/config/config.go) | `unknown` | 构建提交，可用 `-ldflags` 注入 |
 | [`UBAA_SERVER_BUILD_TIME`](internal/config/config.go) | `unknown` | 构建时间，可用 `-ldflags` 注入 |
 | [`UPDATE_DOWNLOAD_URL`](internal/config/config.go) | [GitHub Releases](https://github.com/BUAASubnet/UBAA/releases) | 应用更新下载地址 |

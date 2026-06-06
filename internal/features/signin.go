@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -29,9 +30,14 @@ type signinClient struct {
 	mu        sync.Mutex
 	userID    string
 	sessionID string
+	loginErr  string
 }
 
 func (c *signinClient) GetClasses(ctx context.Context, dateStr string) ([]dto.SigninClassDto, error) {
+	return c.getClasses(ctx, dateStr, true)
+}
+
+func (c *signinClient) getClasses(ctx context.Context, dateStr string, allowRetry bool) ([]dto.SigninClassDto, error) {
 	if !c.ensureLogin(ctx) {
 		return []dto.SigninClassDto{}, nil
 	}
@@ -48,15 +54,25 @@ func (c *signinClient) GetClasses(ctx context.Context, dateStr string) ([]dto.Si
 		return nil, err
 	}
 	var parsed struct {
+		Status json.RawMessage `json:"STATUS"`
 		Result []struct {
-			ID             string `json:"id"`
-			CourseName     string `json:"courseName"`
-			ClassBeginTime string `json:"classBeginTime"`
-			ClassEndTime   string `json:"classEndTime"`
-			SignStatus     int    `json:"signStatus"`
+			ID             string          `json:"id"`
+			CourseName     string          `json:"courseName"`
+			ClassBeginTime string          `json:"classBeginTime"`
+			ClassEndTime   string          `json:"classEndTime"`
+			SignStatus     json.RawMessage `json:"signStatus"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
+		return []dto.SigninClassDto{}, nil
+	}
+	if len(parsed.Status) > 0 && !signinStatusSuccess(parsed.Status) {
+		if allowRetry {
+			c.markUnauthenticated()
+			if c.ensureLogin(ctx) {
+				return c.getClasses(ctx, dateStr, false)
+			}
+		}
 		return []dto.SigninClassDto{}, nil
 	}
 	classes := make([]dto.SigninClassDto, 0, len(parsed.Result))
@@ -66,15 +82,24 @@ func (c *signinClient) GetClasses(ctx context.Context, dateStr string) ([]dto.Si
 			CourseName:     item.CourseName,
 			ClassBeginTime: item.ClassBeginTime,
 			ClassEndTime:   item.ClassEndTime,
-			SignStatus:     item.SignStatus,
+			SignStatus:     signinRawInt(item.SignStatus),
 		})
 	}
 	return classes, nil
 }
 
 func (c *signinClient) SignIn(ctx context.Context, courseID string) (bool, string, error) {
+	return c.signIn(ctx, courseID, true)
+}
+
+func (c *signinClient) signIn(ctx context.Context, courseID string, allowRetry bool) (bool, string, error) {
 	if !c.ensureLogin(ctx) {
-		return false, "登录失败", nil
+		message := c.loginErr
+		c.loginErr = ""
+		if strings.TrimSpace(message) == "" {
+			message = "iclass 登录失败"
+		}
+		return false, message, nil
 	}
 	timestampReq, err := c.newRequest(ctx, http.MethodGet, "http://iclass.buaa.edu.cn:8081/app/common/get_timestamp.action", nil)
 	if err != nil {
@@ -99,22 +124,30 @@ func (c *signinClient) SignIn(ctx context.Context, courseID string) (bool, strin
 		return false, "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("sessionId", c.sessionID)
 	body, err := c.do(req)
 	if err != nil {
 		return false, "", err
 	}
 	var parsed struct {
-		Status int    `json:"STATUS"`
-		ErrMsg string `json:"ERRMSG"`
+		Status json.RawMessage `json:"STATUS"`
+		ErrMsg json.RawMessage `json:"ERRMSG"`
 		Result *struct {
-			StuSignStatus int `json:"stuSignStatus"`
+			StuSignStatus json.RawMessage `json:"stuSignStatus"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return false, "签到失败，请稍后重试", nil
 	}
-	success := parsed.Status == 0 && parsed.Result != nil && parsed.Result.StuSignStatus == 1
-	return success, sanitizeSignInMessage(success, parsed.ErrMsg), nil
+	success := signinStatusSuccess(parsed.Status) && parsed.Result != nil && signinRawString(parsed.Result.StuSignStatus) == "1"
+	rawMessage := signinRawString(parsed.ErrMsg)
+	if !success && allowRetry && strings.Contains(rawMessage, "登录") {
+		c.markUnauthenticated()
+		if c.ensureLogin(ctx) {
+			return c.signIn(ctx, courseID, false)
+		}
+	}
+	return success, sanitizeSignInMessage(success, rawMessage), nil
 }
 
 func (c *signinClient) ensureLogin(ctx context.Context) bool {
@@ -142,19 +175,24 @@ func (c *signinClient) ensureLogin(ctx context.Context) bool {
 		return false
 	}
 	var parsed struct {
-		Status int `json:"STATUS"`
+		Status json.RawMessage `json:"STATUS"`
+		ErrMsg json.RawMessage `json:"ERRMSG"`
 		Result *struct {
 			ID        string `json:"id"`
 			SessionID string `json:"sessionId"`
 		} `json:"result"`
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Status != 0 || parsed.Result == nil {
+	if err := json.Unmarshal(body, &parsed); err != nil || !signinStatusSuccess(parsed.Status) || parsed.Result == nil {
+		if len(parsed.Status) > 0 && !signinStatusSuccess(parsed.Status) {
+			c.loginErr = firstNonBlank(signinRawString(parsed.ErrMsg), "登录失败")
+		}
 		c.userID = ""
 		c.sessionID = ""
 		return false
 	}
 	c.userID = parsed.Result.ID
 	c.sessionID = parsed.Result.SessionID
+	c.loginErr = ""
 	return c.userID != "" && c.sessionID != ""
 }
 
@@ -166,9 +204,12 @@ func (c *signinClient) resolveLoginName(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
-	currentURL := c.rewriteURL(signinMyCenterURL)
+	rawURL := signinMyCenterURL
+	if loginName := extractSigninLoginName(rawURL); loginName != "" {
+		return loginName
+	}
 	for range signinLoginRedirectLimit {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.rewriteURL(rawURL), nil)
 		if err != nil {
 			return ""
 		}
@@ -195,9 +236,17 @@ func (c *signinClient) resolveLoginName(ctx context.Context) string {
 		if nextURL == "" {
 			return ""
 		}
-		currentURL = c.rewriteURL(nextURL)
+		if loginName := extractSigninLoginName(nextURL); loginName != "" {
+			return loginName
+		}
+		rawURL = nextURL
 	}
 	return ""
+}
+
+func (c *signinClient) markUnauthenticated() {
+	c.userID = ""
+	c.sessionID = ""
 }
 
 func (c *signinClient) newRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Request, error) {
@@ -247,6 +296,8 @@ func sanitizeSignInMessage(success bool, rawMessage string) string {
 		return "本次签到已结束"
 	case strings.Contains(rawMessage, "范围"):
 		return "当前不在可签到范围内"
+	case strings.Contains(rawMessage, "用户不存在"):
+		return "签到账号不存在，请联系管理员"
 	case strings.Contains(rawMessage, "课程") && strings.Contains(rawMessage, "不存在"):
 		return "未找到对应课程，请刷新后重试"
 	default:
@@ -283,6 +334,10 @@ func resolveSigninRedirectURL(currentURL, location string) string {
 	if target == "" {
 		return ""
 	}
+	if strings.HasPrefix(target, "/https-") || strings.HasPrefix(target, "/http-") ||
+		strings.HasPrefix(target, "/wss-") || strings.HasPrefix(target, "/ws-") {
+		return "https://d.buaa.edu.cn" + target
+	}
 	base, err := url.Parse(currentURL)
 	if err != nil {
 		return ""
@@ -311,6 +366,40 @@ func percentDecodeOnly(value string) string {
 		builder.WriteByte(value[i])
 	}
 	return builder.String()
+}
+
+func signinStatusSuccess(raw json.RawMessage) bool {
+	status := signinRawString(raw)
+	return status == "0" || status == "200" || status == "success"
+}
+
+func signinRawString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var number json.Number
+	if err := decoder.Decode(&number); err == nil {
+		return number.String()
+	}
+	return ""
+}
+
+func signinRawInt(raw json.RawMessage) int {
+	text := strings.TrimSpace(signinRawString(raw))
+	if text == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(text)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func decodeHexByte(left, right byte) (byte, bool) {

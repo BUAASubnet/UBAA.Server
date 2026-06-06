@@ -37,14 +37,14 @@ func TestCompareVersionsMatchesKtorBehavior(t *testing.T) {
 func TestVersionRouteReturnsAlignedServerVersionMetadata(t *testing.T) {
 	app := fiber.New()
 	RegisterRoutes(app, config.Config{
-		ServerVersion:     "1.7.3",
-		ServerVersionCode: 26,
+		ServerVersion:     "1.7.5",
+		ServerVersionCode: 28,
 		ServerCommit:      "abc1234",
 		ServerBuildTime:   "2026-05-24T12:00:00Z",
 		UpdateDownloadURL: "https://github.com/BUAASubnet/UBAA/releases",
 	})
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/app/version?clientVersion=1.7.2", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/v1/app/version?clientVersion=1.7.4", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,10 +55,10 @@ func TestVersionRouteReturnsAlignedServerVersionMetadata(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Status != "UPDATE_AVAILABLE" || !body.UpdateAvailable || body.LatestVersion != "1.7.3" {
+	if body.Status != "UPDATE_AVAILABLE" || !body.UpdateAvailable || body.LatestVersion != "1.7.5" {
 		t.Fatalf("body = %#v", body)
 	}
-	if body.VersionCode == nil || *body.VersionCode != 26 {
+	if body.VersionCode == nil || *body.VersionCode != 28 {
 		t.Fatalf("versionCode = %#v", body.VersionCode)
 	}
 	if body.ServerCommit == nil || *body.ServerCommit != "abc1234" {

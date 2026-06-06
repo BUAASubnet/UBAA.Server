@@ -18,6 +18,7 @@ func TestSanitizeSignInMessage(t *testing.T) {
 		"现在不是上课时间": "当前不是上课时间，无法签到",
 		"签到已结束":    "本次签到已结束",
 		"不在范围":     "当前不在可签到范围内",
+		"用户不存在":    "签到账号不存在，请联系管理员",
 		"课程不存在":    "未找到对应课程，请刷新后重试",
 		"其他错误":     "签到失败，请稍后重试",
 	}
@@ -59,6 +60,7 @@ func TestResolveSigninRedirectURL(t *testing.T) {
 		"cas/final":                     "https://iclass.buaa.edu.cn:8346/cas/final",
 		"?loginName=abc%2Bdef%3D":       "https://iclass.buaa.edu.cn:8346/cas-login?loginName=abc%2Bdef%3D",
 		"#/MyCenter":                    "https://iclass.buaa.edu.cn:8346/cas-login?ticket=ST-test#/MyCenter",
+		"/https-8346/encrypted/path":    "https://d.buaa.edu.cn/https-8346/encrypted/path",
 	}
 	for location, want := range cases {
 		if got := resolveSigninRedirectURL("https://iclass.buaa.edu.cn:8346/cas-login?ticket=ST-test", location); got != want {
@@ -148,6 +150,124 @@ func TestSigninClientFollowsSSORedirectsAndLogsInWithLoginName(t *testing.T) {
 	}
 }
 
+func TestSigninClientAcceptsStringStatusesAndRetriesClassLoad(t *testing.T) {
+	loginName := "iclass-login-name"
+	var classSessions []string
+	var appLoginPhones []string
+	var serverURL string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/jump":
+			http.Redirect(w, r, "https://iclass.buaa.edu.cn:8346/?loginName="+url.QueryEscape(loginName)+"&type=jumpMyCenter#/MyCenter", http.StatusFound)
+		case "/app/user/login.action":
+			appLoginPhones = append(appLoginPhones, r.URL.Query().Get("phone"))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"STATUS": "success",
+				"result": map[string]any{"id": "new-user", "sessionId": "new-session"},
+			})
+		case "/app/course/get_stu_course_sched.action":
+			classSessions = append(classSessions, r.Header.Get("sessionId"))
+			if len(classSessions) == 1 {
+				_, _ = io.WriteString(w, `{"STATUS":"401","ERRMSG":"登录已失效"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"STATUS":"200","result":[{"id":"course-1","courseName":"软件工程","classBeginTime":"08:00","classEndTime":"09:40","signStatus":"1"}]}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	client := &signinClient{
+		studentID: "24182104",
+		client:    server.Client(),
+		upstream:  signinTestRewriter(serverURL),
+		userID:    "old-user",
+		sessionID: "old-session",
+	}
+	classes, err := client.GetClasses(context.Background(), "20260524")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(appLoginPhones) != 1 || appLoginPhones[0] != loginName {
+		t.Fatalf("appLoginPhones = %#v", appLoginPhones)
+	}
+	if strings.Join(classSessions, ",") != "old-session,new-session" {
+		t.Fatalf("classSessions = %#v", classSessions)
+	}
+	if len(classes) != 1 || classes[0].SignStatus != 1 {
+		t.Fatalf("classes = %#v", classes)
+	}
+}
+
+func TestSigninClientSendsSessionHeaderAndRetriesSignin(t *testing.T) {
+	loginName := "iclass-login-name"
+	var signinSessions []string
+	var appLoginPhones []string
+	var serverURL string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/jump":
+			http.Redirect(w, r, "https://iclass.buaa.edu.cn:8346/?loginName="+url.QueryEscape(loginName)+"&type=jumpMyCenter#/MyCenter", http.StatusFound)
+		case "/app/user/login.action":
+			appLoginPhones = append(appLoginPhones, r.URL.Query().Get("phone"))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"STATUS": 0,
+				"result": map[string]any{"id": "new-user", "sessionId": "new-session"},
+			})
+		case "/app/common/get_timestamp.action":
+			_, _ = io.WriteString(w, `{"timestamp":"20260524120000"}`)
+		case "/app/course/stu_scan_sign.action":
+			signinSessions = append(signinSessions, r.Header.Get("sessionId"))
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("courseSchedId") != "course-1" || r.Form.Get("timestamp") != "20260524120000" {
+				t.Fatalf("unexpected signin form/query: %s %#v", r.URL.RawQuery, r.Form)
+			}
+			if len(signinSessions) == 1 {
+				if r.Form.Get("id") != "old-user" {
+					t.Fatalf("first signin id = %q", r.Form.Get("id"))
+				}
+				_, _ = io.WriteString(w, `{"STATUS":1,"ERRMSG":"登录已失效"}`)
+				return
+			}
+			if r.Form.Get("id") != "new-user" {
+				t.Fatalf("second signin id = %q", r.Form.Get("id"))
+			}
+			_, _ = io.WriteString(w, `{"STATUS":"0","ERRMSG":"OK","result":{"stuSignStatus":"1"}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	client := &signinClient{
+		studentID: "24182104",
+		client:    server.Client(),
+		upstream:  signinTestRewriter(serverURL),
+		userID:    "old-user",
+		sessionID: "old-session",
+	}
+	success, message, err := client.SignIn(context.Background(), "course-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !success || message != "OK" {
+		t.Fatalf("SignIn = %v, %q", success, message)
+	}
+	if len(appLoginPhones) != 1 || appLoginPhones[0] != loginName {
+		t.Fatalf("appLoginPhones = %#v", appLoginPhones)
+	}
+	if strings.Join(signinSessions, ",") != "old-session,new-session" {
+		t.Fatalf("signinSessions = %#v", signinSessions)
+	}
+}
+
 type signinTestUpstream struct {
 	rewrite func(string) string
 }
@@ -162,4 +282,21 @@ func (u signinTestUpstream) NewNoRedirect(_ string) (*http.Client, error) {
 			return http.ErrUseLastResponse
 		},
 	}, nil
+}
+
+func signinTestRewriter(serverURL string) signinTestUpstream {
+	return signinTestUpstream{rewrite: func(raw string) string {
+		switch {
+		case strings.HasPrefix(raw, signinMyCenterURL):
+			return serverURL + "/jump"
+		case strings.HasPrefix(raw, "https://iclass.buaa.edu.cn:8346/"):
+			return serverURL + strings.TrimPrefix(raw, "https://iclass.buaa.edu.cn:8346")
+		case strings.HasPrefix(raw, "https://iclass.buaa.edu.cn:8347"):
+			return serverURL + strings.TrimPrefix(raw, "https://iclass.buaa.edu.cn:8347")
+		case strings.HasPrefix(raw, "http://iclass.buaa.edu.cn:8081"):
+			return serverURL + strings.TrimPrefix(raw, "http://iclass.buaa.edu.cn:8081")
+		default:
+			return raw
+		}
+	}}
 }

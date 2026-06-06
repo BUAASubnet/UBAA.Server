@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	DefaultVersion     = "1.7.3"
-	DefaultVersionCode = "26"
+	DefaultVersion     = "1.7.5"
+	DefaultVersionCode = "28"
 )
 
 var (
